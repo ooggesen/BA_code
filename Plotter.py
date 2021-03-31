@@ -59,7 +59,7 @@ def load(path):
 def parseData(path):
     """loads the data from the .Wfm file
      and parses all data needed for plotting
-      in args from the casual file"""
+      in args from the casual file. Only compatible with .csv and .bin files"""
 
     try:
         data = load(path + ".Wfm.csv")
@@ -108,7 +108,7 @@ def parseData(path):
 
 
 def Plotter(paths, title, save=False, labelarray = None, xlim = None, extraData = None):
-    """Plots all data from given path automaticly
+    """Plots all data from given path automatically, which are stored in .csv or .bin format.
     extraData for extra plots will always be plotted at last"""
     yarray = []
     xarray = []
@@ -118,7 +118,7 @@ def Plotter(paths, title, save=False, labelarray = None, xlim = None, extraData 
 
         for dataElem in data:
             if xlim is not None:
-                dataElem, x = xWindow(dataElem, xlim, args)
+                dataElem, x, _ = RectWindow(dataElem, xlim, args)
             else:
                 x = np.linspace(args["HardwareXStart"], args["HardwareXStop"], len(dataElem))
             if save is True:
@@ -151,7 +151,9 @@ def Plotter(paths, title, save=False, labelarray = None, xlim = None, extraData 
 
     plot(xarray, yarray, title, xlabel, "voltage in V", save, labelarray=labelarray, xlim=xlim)
 
-def findData(path):
+def findData(path, search_key = None):
+    """Finds the path of data in a given folder and its subfolders. If search_key is given, only paths which contain the search_key are returned.
+    Else it returns all Wfm.bin and Wfm.csv files and excludes its endings."""
     paths = []
     with os.scandir(path) as it:
         for entry in it:
@@ -161,12 +163,16 @@ def findData(path):
                 except :
                     pass
             elif entry.is_file():
-                if ".Wfm.csv" in entry.name:
-                    tmp = str(entry.path).replace(".Wfm.csv", "")
-                    paths.append(tmp)
-                elif ".Wfm.bin" in entry.name:
-                    tmp = str(entry.path).replace(".Wfm.bin", "")
-                    paths.append(tmp)
+                if search_key is not None:
+                    if search_key in entry.name:
+                        paths.append(str(entry.path))
+                else:
+                    if ".Wfm.csv" in entry.name:
+                        tmp = str(entry.path).replace(".Wfm.csv", "")
+                        paths.append(tmp)
+                    elif ".Wfm.bin" in entry.name:
+                        tmp = str(entry.path).replace(".Wfm.bin", "")
+                        paths.append(tmp)
     if paths == []:
         pass
     else:
@@ -174,8 +180,9 @@ def findData(path):
 
 
 def Autoplot(path, titledict = None):
+    """Plots all .bin and .csv saved data in given folder and all subfolders."""
     paths = findData(path)
-    for i, path in enumerate(paths):
+    for path in paths:
         title = None
         if titledict is not None:
             for key in titledict.keys():
@@ -188,34 +195,24 @@ def Autoplot(path, titledict = None):
         Plotter([path], title, True)
 
 
-def FFT(path, title=None, xlim=None, save=False, freqLim=None):
+def FFTPlot(path, title=None, xlim=None, save=False, freqLim=None):
+    """Plots a FFT from the data in given path."""
     data, args = parseData(path)
 
     if xlim is not None:
-        data, x = xWindow(data[0], xlim, args)
+        data, x, step = RectWindow(data[0], xlim, args)
         x = None
-        step = (xlim[1]-xlim[0])/len(data)
     else:
-        data = data[0]
+        data = data[0]  #TODO adapt for multiinput signals
         step = (args["HardwareXStop"] - args["HardwareXStart"]) / len(data)
+    Tmax=1e-7
 
-    Tmax=0.25e-7    #1/fs
-    if step < Tmax:
-        maxlength = int(step/Tmax*len(data))
-        data = downSample(data=data, maxlength=maxlength)
-        step = int(Tmax/step)*step
-
-    N = len(data)
-    fft = np.fft.fft(data, N)
+    mag, freq = FFT(data, step, Tmax)
     data = None
-    mag = 2*abs(fft)/N
-    fft = None
-    freq = np.fft.fftfreq(N, step)
+
     for i in range(len(freq)):
-        freq[i] = freq[i]*1e-6
-    freqLim = (freqLim[0]*1e-6, freqLim[1]*1e-6)
-
-
+        freq[i] = freq[i] * 1e-6
+    freqLim = (freqLim[0] * 1e-6, freqLim[1] * 1e-6)
     plt.figure()
     plt.stem(freq, mag, use_line_collection=True)
     plt.xlabel("frequency in MHz")
@@ -235,7 +232,7 @@ def FFT(path, title=None, xlim=None, save=False, freqLim=None):
         plt.show()
 
 
-def xWindow(dataElem, xlim, args):
+def RectWindow(dataElem, xlim, args):
     step = (args["HardwareXStop"] - args["HardwareXStart"]) / len(dataElem)
     dataElem = dataElem[int((xlim[0] - args["HardwareXStart"]) / step):int((xlim[1] - args["HardwareXStart"]) / step)]
     x = np.linspace(xlim[0], xlim[1], len(dataElem))
@@ -243,7 +240,8 @@ def xWindow(dataElem, xlim, args):
         assert len(dataElem) != 0
     except AssertionError:
         raise AssertionError("Wrong xlim data input. There is no data for given time period.")
-    return dataElem, x
+    step = (xlim[1] - xlim[0]) / len(dataElem)
+    return dataElem, x, step
 
 def downSample(data, maxlength, x=None):
     data = data[0::int(len(data) / maxlength)]
@@ -256,12 +254,124 @@ def getData(path, xlim=None):
     data, args = parseData(path)
 
     if xlim is not None:
-        data, x = xWindow(data[0], xlim, args)
+        data, x, _ = RectWindow(data[0], xlim, args)
     return data
 
 def calcPower(data):
     #Calculates power over a 50 Ohms resistor
     return np.sum(np.array(data)**2)/50/len(data)
+
+def measureFreq(path, xlim=None):
+    """Makes a FFT of the received data, and writes the dominant frequency to an .txt file."""
+    data, args = parseData(path)
+
+    for i, d in enumerate(data):
+        if xlim is not None:
+            d, t, step = RectWindow(dataElem=d, xlim=xlim, args=args)
+        else:
+            step = (args["HardwareXStop"] - args["HardwareXStart"]) / len(d)
+            T0 = step* len(d)
+            T0min = 1/10
+        if 1/T0 > T0min:
+            d.extend(np.zeros(int(T0min / step) - int(T0 / step)))      #Zero padding
+        mag, freq = FFT(data=d, step=step)
+        freq = freq[0:int(len(freq)/2)]
+        idx_start = binarySearch(freq, 3e6)
+        idx_stop = binarySearch(freq, 5e6)
+
+        m_max = 0.0
+        for f, m in zip(freq[idx_start:idx_stop], mag[idx_start:idx_stop]):
+            if m>m_max:
+                f_max = f
+                m_max = m
+
+        path = os.path.dirname(path)
+        with open(path + "/freqChannel{}.txt".format(i+1), "a") as file:
+            file.write("{}\n".format(f_max))
+
+def measureFreqAuto(path, xlim = None):
+    """Measures the dominant frequency in data stored in path address and saves it to a .txt file."""
+    paths = findData(path)
+    for path in paths:  #Removes the stored data in .txt files if they exist
+        path = os.path.dirname(path)
+        for i in range(2):
+            data = path + "/freqChannel{}.txt".format(i + 1)
+            if os.path.exists(data):
+                os.remove(data)
+    for path in paths:
+        if xlim is not None:
+            measureFreq(path=path, xlim = xlim)
+        else:
+            measureFreq(path=path)
+    new_paths = []
+    for path in paths:
+        path = os.path.dirname(path)
+        if path in new_paths:
+            pass
+        else:
+            new_paths.append(path)
+            for i in range(2):
+                data_path = path + "/freqChannel{}.txt".format(i+1)
+                if os.path.exists(data_path):
+                    mean, u = calc_uncer_from_file(data_path)
+                    if u is None:
+                        pass
+                    else:
+                        with open(data_path, "a")as file:
+                            file.write("\n")
+                            file.write("{} +- {}".format(mean, u))
+
+def calc_uncer_from_file(path):
+    with open(path, "r") as file:
+        data = file.readlines()
+    data_float = []
+    for dp in data:
+        data_float.append(float(dp.replace("\n", "")))
+    sum = 0.0
+    for dp in data_float:
+        sum = sum + dp
+    mean =sum / len(data_float)
+
+    sigma = 0.0
+    for dp in data_float:
+        sigma = (dp - mean)**2
+    if len(data_float) != 1 and len(data_float) != 0:
+        sigma = sigma/(len(data_float)-1)/len(data_float)
+        sigma = np.sqrt(sigma)
+    else:
+        sigma = None
+
+    return mean, sigma
+
+
+def FFT(data, step, Tmax=None):
+    if Tmax is None: Tmax = 1e-7  # 1/fs
+    if step < Tmax:
+        maxlength = int(step / Tmax * len(data))
+        length = len(data)
+        data = downSample(data=data, maxlength=maxlength)
+        step = int(length / maxlength) * step
+    N = len(data)
+    fft = np.fft.fft(data, N)
+    data = None
+    mag = abs(fft)*2/N #*2/N
+    fft = None
+    freq = np.fft.fftfreq(N, step)
+    return mag, freq
+
+def binarySearch(data, key):
+    if len(data) == 1:
+        return 0
+    else:
+        i = int(len(data)/2)-1
+        if data[i] == key:
+            return i
+        elif data[i] > key:
+            return binarySearch(data[0:i], key)
+        elif data[i] < key:
+            return i + binarySearch(data[i:-1], key)
+
+
 
 
 
@@ -274,7 +384,7 @@ def calcPower(data):
 
 if __name__ == '__main__':
     #TODO titledict only works if titles are keys are unique for every path
-    """
+    
     titledict = {}
     titledict["GateAndRFPulseAmplified0212"] = "RF and gate pulse amplified"
     titledict["GateAndRFPulseNotAmplified0212"] = "RF and gate pulse not amplified"
@@ -289,57 +399,17 @@ if __name__ == '__main__':
     curr_path = os.path.dirname(__file__)   #returns the current path of the python skript
     curr_path = os.path.dirname(curr_path)  # ".."
 
-    Autoplot(curr_path, titledict = titledict)
-    """
+    #Autoplot(curr_path, titledict = titledict)
+    measureFreqAuto(path=curr_path)
+    save = False
 
-    save = True
-
-    """
-    start = 0.000025
-    end = 0.000026
-    xlim = (start, end)
-    t = np.linspace(start, end, 3000)
-    y = 0.15*np.sin(2*np.pi*4.3576e6*t+0.39*np.pi)
-    xData = [t, y]
+    freqLim = (3e6, 5e6)
     path = "/home/ole/StorageServer/Work/BachelorThesis/RedPitaya16BitUndMessaufbau/Messergebnisse/11.01.2021/90degPulse"
-    Plotter(paths=[path], title="Output RP", save=save, xlim=xlim, labelarray=["output", "ideal"], extraData=xData)
-
-    paths = ["/home/ole/StorageServer/Work/BachelorThesis/RedPitaya16BitUndMessaufbau/Messergebnisse/11.01.2021/90and180degPulse", "/home/ole/StorageServer/Work/BachelorThesis/RedPitaya16BitUndMessaufbau/Messergebnisse/11.01.2021/90and180degPulse50Ohm"]
-
-    Plotter(paths=paths, title="Difference in input resistance", save=save, labelarray=["1 MOhm", "50 Ohm"])
-
-
-    freqLim = (3e6, 6e6)
-    path = "/home/ole/StorageServer/Work/BachelorThesis/RedPitaya16BitUndMessaufbau/Messergebnisse/11.01.2021/90degPulse"
-    xlim = (0.0, 0.00003)
-
-    FFT(path=path, title="Output RP", xlim=xlim, save=save, freqLim=freqLim)
-
+    xlim = None # (0.0, 0.00003)
     
-    path = "/home/ole/StorageServer/Work/BachelorThesis/RedPitaya16BitUndMessaufbau/Messergebnisse/13.01.2021/TRSwitchJustGatePulse"
+    #Plotter(paths=[path], title ="Test", save=save, xlim=xlim)
+    #FFTAutoPlot(path=path, title="Output RP", xlim=xlim, save=save, freqLim=freqLim)
 
-    xlim = (-0.0001, 0.0001)
-    freqLim = (0, 5e6)
 
-    Plotter(paths=[path], title="Gate Ringing Zoom", save=save, xlim=xlim)
-
-    xlim = (0, 0.0001)
-    FFT(path=path, title="Gate Ringing TR Switch", xlim=xlim, freqLim=freqLim, save=save)
-
-    #calculate power of pulse with 50 Ohms
-    voltage = getData(path=path, xlim=(0, 40e-6))
-    power = calcPower(data=voltage)
-    print("Power of the first pulse: {} W".format(power))
-
-    freqLim = (0.0, 5e6)
-    path = "/home/ole/StorageServer/Work/BachelorThesis/RedPitaya16BitUndMessaufbau/Messergebnisse/13.01.2021/RFPulsePowerAmplifier90and180deg"
-    xlim=(-0.00015, 0.0001)
-    Plotter(paths=[path], title="90 deg pulse power amplifier", save=save, xlim=xlim)
-    """
-    input = np.array([i*0.1 for i in range(1, 13)])
-    theo_output = np.array(input)*1000
-    real_output = np.array([98.98, 191.3192, 281.7609, 373.1514, 461.6958, 559.7271, 632.46, 711.5175, 787.4127, 860.1456, 936.0408, 1011.936])
-
-    plot([input, input], [theo_output, real_output], "RF amplifier", "voltage in V", "voltage in V", True, ["ideal", "measured"], (0.1, 0.6), (100, 600))
 
 
