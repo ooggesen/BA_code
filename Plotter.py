@@ -69,12 +69,15 @@ def parseData(path):
             data = load(path + ".Wfm.bin")
             args = load(path + ".bin")
         except FileNotFoundError:
-            raise FileNotFoundError("File not found. Only bin and csv datatypes are supported.")
+            raise FileNotFoundError("File not found. Only .bin and .csv datatypes are supported.")
     val = {}
 
     # parse for x values
     if isinstance(args, type([])):
         for arg in args:
+            if "BaseUnit:" in arg:
+                tmp = arg.split(":")
+                assert tmp[1] == "V"
             if "HardwareXStart" in arg:
                 tmp = arg.split(":")
                 val["HardwareXStart"] = float(tmp[1])
@@ -83,9 +86,20 @@ def parseData(path):
                 val["HardwareXStop"] = float(tmp[1])
 
         #parse for y values
-        for i, point in enumerate(data):
-            data[i] = float(point)
-        data = [data]  # TODO check if .csv files with more then one waveform are read correctly
+        if ";" in data[0]:
+            tmp = []
+            for i, point in enumerate(data):
+                data[i] = point.split(";")
+            for i in range(len(data[0])):
+                tmp.append([])
+            for i, point in enumerate(data):
+                for j, p in enumerate(point):
+                    tmp[j].append(float(data[i][j]))
+            data = tmp
+        else:
+            for i, point in enumerate(data):
+                data[i] = float(point)
+            data = [data]  # TODO check if .csv files with more then one waveform are read correctly
 
     if isinstance(args, ET.Element):
         for child in args:
@@ -151,7 +165,7 @@ def Plotter(paths, title, save=False, labelarray = None, xlim = None, extraData 
 
     plot(xarray, yarray, title, xlabel, "voltage in V", save, labelarray=labelarray, xlim=xlim)
 
-def findData(path, search_key = None):
+def findData(path, search_key=None):
     """Finds the path of data in a given folder and its subfolders. If search_key is given, only paths which contain the search_key are returned.
     Else it returns all Wfm.bin and Wfm.csv files and excludes its endings."""
     paths = []
@@ -159,8 +173,8 @@ def findData(path, search_key = None):
         for entry in it:
             if entry.is_dir():
                 try:
-                    paths.extend(findData(entry.path))
-                except :
+                    paths.extend(findData(entry.path, search_key=search_key))
+                except:
                     pass
             elif entry.is_file():
                 if search_key is not None:
@@ -261,7 +275,7 @@ def calcPower(data):
     #Calculates power over a 50 Ohms resistor
     return np.sum(np.array(data)**2)/50/len(data)
 
-def measureFreq(path, xlim=None):
+def measureFreq(path, xlim=None, freqLim = None):
     """Makes a FFT of the received data, and writes the dominant frequency to an .txt file."""
     data, args = parseData(path)
 
@@ -270,14 +284,16 @@ def measureFreq(path, xlim=None):
             d, t, step = RectWindow(dataElem=d, xlim=xlim, args=args)
         else:
             step = (args["HardwareXStop"] - args["HardwareXStart"]) / len(d)
-            T0 = step* len(d)
-            T0min = 1/10
+        T0 = step* len(d)
+        T0min = 1/10
         if 1/T0 > T0min:
             d.extend(np.zeros(int(T0min / step) - int(T0 / step)))      #Zero padding
         mag, freq = FFT(data=d, step=step)
         freq = freq[0:int(len(freq)/2)]
-        idx_start = binarySearch(freq, 3e6)
-        idx_stop = binarySearch(freq, 5e6)
+        if freqLim is None:
+            freqLim = (3e6, 5e6)
+        idx_start = binarySearch(freq, freqLim[0])
+        idx_stop = binarySearch(freq, freqLim[1])
 
         m_max = 0.0
         for f, m in zip(freq[idx_start:idx_stop], mag[idx_start:idx_stop]):
@@ -285,8 +301,8 @@ def measureFreq(path, xlim=None):
                 f_max = f
                 m_max = m
 
-        path = os.path.dirname(path)
-        with open(path + "/freqChannel{}.txt".format(i+1), "a") as file:
+        file_path = os.path.dirname(path)
+        with open(file_path + "/freqChannel{}.txt".format(i+1), "a") as file:
             file.write("{}\n".format(f_max))
 
 def measureFreqAuto(path, xlim = None):
@@ -313,7 +329,7 @@ def measureFreqAuto(path, xlim = None):
             for i in range(2):
                 data_path = path + "/freqChannel{}.txt".format(i+1)
                 if os.path.exists(data_path):
-                    mean, u = calc_uncer_from_file(data_path)
+                    mean, u = calcUncerFromFile(data_path)
                     if u is None:
                         pass
                     else:
@@ -321,7 +337,7 @@ def measureFreqAuto(path, xlim = None):
                             file.write("\n")
                             file.write("{} +- {}".format(mean, u))
 
-def calc_uncer_from_file(path):
+def calcUncerFromFile(path):
     with open(path, "r") as file:
         data = file.readlines()
     data_float = []
@@ -371,6 +387,123 @@ def binarySearch(data, key):
         elif data[i] < key:
             return i + binarySearch(data[i:-1], key)
 
+def measureAmp(path, Tmax = None, xlim = None):
+    """Evaluates the amplitude of the measured data. Has a Threshold implemented, and only amplitudes over that threshold are detected.
+    Tmax : declares the maximum time between two samples. If this value is bigger than in the data, the data is downsampled."""
+    data, args = parseData(path)
+
+    for i, y in enumerate(data):
+        if xlim is not None:
+            y, t, step =RectWindow(dataElem=y, xlim=xlim, args=args)
+        else:
+            step = (args["HardwareXStop"] - args["HardwareXStart"]) / len(y)
+        if Tmax is None: Tmax = 1e-7  # 1/fs
+        if step < Tmax:
+            maxlength = int(step / Tmax * len(y))
+            length = len(y)
+            y = downSample(data=y, maxlength=maxlength)
+            step = int(length / maxlength) * step
+        dydt = np.gradient(y, step)
+
+        amplitudes = []
+
+        if i == 0:
+            threshold = 0.04
+        else:
+            threshold = 2.5
+        for j, dy in enumerate(dydt):
+            if abs(dy) < 0.5 and abs(y[j]) > threshold:
+                amplitudes.append(abs(y[j]))
+
+
+        amplitude = np.sum(amplitudes) / len(amplitudes)
+
+
+        file_path = os.path.dirname(path)
+        with open(file_path + "/ampChannel{}.txt".format(i+1), "a") as file:
+            file.write("{}\n".format(amplitude))
+
+def measureAmpAuto(path):
+    paths = findData(path)
+    for path in paths:  # Removes the stored data in .txt files if they exist
+        path = os.path.dirname(path)
+        for i in range(2):
+            data = path + "/ampChannel{}.txt".format(i + 1)
+            if os.path.exists(data):
+                os.remove(data)
+    for path in paths:
+        measureAmp(path)
+    new_paths = []
+    for path in paths:
+        path = os.path.dirname(path)
+        if path in new_paths:
+            pass
+        else:
+            new_paths.append(path)
+            for i in range(2):
+                data_path = path + "/ampChannel{}.txt".format(i + 1)
+                if os.path.exists(data_path):
+                    mean, u = calcUncerFromFile(data_path)
+                    if u is None:
+                        pass
+                    else:
+                        with open(data_path, "a")as file:
+                            file.write("\n")
+                            file.write("{} +- {}".format(mean, u))
+
+def readValuesFromTxtAuto(path):
+    paths = findData(path=path, search_key=".txt")
+    return_dict = {}
+    for path in paths:
+        data = readValuesFromTxt(path)
+        path = path.split("/")
+        tmp = {path[-1] : data}
+        for i in reversed(path[0:-1]):
+            tmp = {i : tmp}
+
+def merge_dicts(dict1, dict2):
+    if isinstance(dict1, type({})) and isinstance(dict2,  type({})):
+        for key1 in dict1.keys():
+            if key1 in dict2.keys():
+                dict2[key1] = merge_dicts(dict1[key1], dict2[key1])
+            else:
+                dict2[key1] = dict1[key1]
+        return dict2
+    elif not isinstance(dict1, type({})) or not isinstance(dict2, type({})):
+        return [dict1, dict2]
+
+
+
+
+
+
+
+
+def readValuesFromTxt(path):
+    if os.path.exists(path):
+        with open(path, "r") as file:
+            data = file.readlines()
+            if len(data) == 0:
+                raise AssertionError("There is no data contained in given path: {}".format(path))
+        for i, point in enumerate(data):
+            data[i] = point.replace("\n", "")
+        data = data[-1]
+        data = data.split("+-")
+        for i, d in enumerate(data):
+            data[i] = float(d)
+        return data
+    else:
+        raise AssertionError("The file described by the path does not exist.")
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -398,9 +531,12 @@ if __name__ == '__main__':
 
     curr_path = os.path.dirname(__file__)   #returns the current path of the python skript
     curr_path = os.path.dirname(curr_path)  # ".."
-
+    curr_path = curr_path + "/07042021RFAmplifier"
     #Autoplot(curr_path, titledict = titledict)
-    measureFreqAuto(path=curr_path)
+    #measureFreqAuto(path=curr_path)
+    #measureAmpAuto(path=curr_path)
+    readValuesFromTxtAuto(path=curr_path)
+
     save = False
 
     freqLim = (3e6, 5e6)
