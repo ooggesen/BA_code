@@ -7,7 +7,7 @@ import array
 import xml.etree.ElementTree as ET
 
 
-def plot(xarray, yarray, title, xlabel, ylabel,  save, labelarray = None, xlim = None, ylim = None):
+def plot(xarray, yarray, title, xlabel, ylabel,  save, labelarray = None, xlim = None, ylim = None, savePath = None):
     '''Function for plotting the measurments on the NMR MRT
     y can contain multiple dataarrays,
     save is either True or False
@@ -28,7 +28,13 @@ def plot(xarray, yarray, title, xlabel, ylabel,  save, labelarray = None, xlim =
         if isinstance(ylim, type(())):
             plt.ylim(ylim)
     if save == True:
-        savetitle = "./plots/" + title.replace(" ", "_") + ".pdf"
+        if savePath is None:
+            savetitle = "./plots/" + title.replace(" ", "_") + ".pdf"
+        else:
+            savePath = savePath + "/plots"
+            if not os.path.exists(savePath):
+                os.mkdir(savePath)
+            savetitle = savePath + "/" + title.replace(" ", "_") + ".pdf"
         plt.savefig(savetitle, format="pdf")
         plt.close()
     else:
@@ -89,17 +95,16 @@ def parseData(path):
         if ";" in data[0]:
             tmp = []
             for i, point in enumerate(data):
-                data[i] = point.split(";")
-            for i in range(len(data[0])):
-                tmp.append([])
-            for i, point in enumerate(data):
-                for j, p in enumerate(point):
-                    tmp[j].append(float(data[i][j]))
+                data_split = point.split(";")
+                while len(tmp) < len(data_split):
+                    tmp.append([])
+                for j, d in enumerate(data_split):
+                    tmp[j].append(float(d))
             data = tmp
         else:
             for i, point in enumerate(data):
                 data[i] = float(point)
-            data = [data]  # TODO check if .csv files with more then one waveform are read correctly
+            data = [data]
 
     if isinstance(args, ET.Element):
         for child in args:
@@ -163,7 +168,7 @@ def Plotter(paths, title, save=False, labelarray = None, xlim = None, extraData 
     except:
         raise AssertionError("This file in contains no information. An empty list was created.")
 
-    plot(xarray, yarray, title, xlabel, "voltage in V", save, labelarray=labelarray, xlim=xlim)
+    plot(xarray, yarray, title, xlabel, "voltage in V", save, labelarray=labelarray, xlim=xlim, savePath=os.path.dirname(path))
 
 def findData(path, search_key=None):
     """Finds the path of data in a given folder and its subfolders. If search_key is given, only paths which contain the search_key are returned.
@@ -284,9 +289,9 @@ def measureFreq(path, xlim=None, freqLim = None):
             d, t, step = RectWindow(dataElem=d, xlim=xlim, args=args)
         else:
             step = (args["HardwareXStop"] - args["HardwareXStart"]) / len(d)
-        T0 = step* len(d)
-        T0min = 1/10
-        if 1/T0 > T0min:
+        T0 = step * len(d)
+        T0min = 1/50    #Defines the sampling rate in the frequency domain: fs = 1/T=min TODO set bigger value if final run
+        if T0min > T0:
             d.extend(np.zeros(int(T0min / step) - int(T0 / step)))      #Zero padding
         mag, freq = FFT(data=d, step=step)
         freq = freq[0:int(len(freq)/2)]
@@ -306,7 +311,7 @@ def measureFreq(path, xlim=None, freqLim = None):
             file.write("{}\n".format(f_max))
 
 def measureFreqAuto(path, xlim = None):
-    """Measures the dominant frequency in data stored in path address and saves it to a .txt file."""
+    """Measures the dominant frequency in the data stored in path address and saves it to a .txt file. Only frequencies between 3MhZ and 5 MhZ are evaluated."""
     paths = findData(path)
     for path in paths:  #Removes the stored data in .txt files if they exist
         path = os.path.dirname(path)
@@ -411,9 +416,12 @@ def measureAmp(path, Tmax = None, xlim = None):
             threshold = 0.04
         else:
             threshold = 2.5
-        for j, dy in enumerate(dydt):
-            if abs(dy) < 0.5 and abs(y[j]) > threshold:
-                amplitudes.append(abs(y[j]))
+        while len(amplitudes)<5:
+            for j, dy in enumerate(dydt):
+                if abs(dy) < 0.5 and abs(y[j]) > threshold:
+                    amplitudes.append(abs(y[j]))
+            threshold = threshold - 0.01
+
 
 
         amplitude = np.sum(amplitudes) / len(amplitudes)
@@ -457,9 +465,12 @@ def readValuesFromTxtAuto(path):
     for path in paths:
         data = readValuesFromTxt(path)
         path = path.split("/")
+        path = path[1:]
         tmp = {path[-1] : data}
         for i in reversed(path[0:-1]):
             tmp = {i : tmp}
+        return_dict = merge_dicts(tmp, return_dict)
+    return return_dict
 
 def merge_dicts(dict1, dict2):
     if isinstance(dict1, type({})) and isinstance(dict2,  type({})):
@@ -495,7 +506,10 @@ def readValuesFromTxt(path):
     else:
         raise AssertionError("The file described by the path does not exist.")
 
-
+def evaluate(path):
+    measureFreqAuto(path=path)
+    measureAmpAuto(path=path)
+    return readValuesFromTxtAuto(path=path)
 
 
 
@@ -532,10 +546,10 @@ if __name__ == '__main__':
     curr_path = os.path.dirname(__file__)   #returns the current path of the python skript
     curr_path = os.path.dirname(curr_path)  # ".."
     curr_path = curr_path + "/07042021RFAmplifier"
-    #Autoplot(curr_path, titledict = titledict)
+    Autoplot(curr_path, titledict = titledict)
     #measureFreqAuto(path=curr_path)
     #measureAmpAuto(path=curr_path)
-    readValuesFromTxtAuto(path=curr_path)
+    data = readValuesFromTxtAuto(path=curr_path)
 
     save = False
 
