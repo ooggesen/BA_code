@@ -16,7 +16,7 @@ def plot(xarray, yarray, title, xlabel, ylabel,  save, labelarray = None, xlim =
     plt.figure()
     for x, y in zip(xarray, yarray):
         plt.plot(x, y, linewidth=1)
-    plt.title(title)
+    #plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     if labelarray:
@@ -167,8 +167,9 @@ def Plotter(paths, title, save=False, labelarray = None, xlim = None, extraData 
         assert len(xarray) != 0 and len(yarray) != 0
     except:
         raise AssertionError("This file in contains no information. An empty list was created.")
+    ylim = (np.min(yarray[0])*1.1, np.max(yarray[0])*1.1)
 
-    plot(xarray, yarray, title, xlabel, "voltage in V", save, labelarray=labelarray, xlim=xlim, savePath=os.path.dirname(path))
+    plot(xarray, yarray, title, xlabel, "voltage in V", save, labelarray=labelarray, xlim=xlim, savePath=os.path.dirname(path), ylim=ylim)
 
 def findData(path, search_key=None):
     """Finds the path of data in a given folder and its subfolders. If search_key is given, only paths which contain the search_key are returned.
@@ -252,6 +253,13 @@ def FFTPlot(path, title=None, xlim=None, save=False, freqLim=None):
 
 
 def RectWindow(dataElem, xlim, args):
+    """
+    Muliplies the data in dataElem with a rectangularlar window.
+    :param dataElem: array like containing information
+    :param xlim: touple with start and end point
+    :param args:
+    :return:
+    """
     step = (args["HardwareXStop"] - args["HardwareXStart"]) / len(dataElem)
     dataElem = dataElem[int((xlim[0] - args["HardwareXStart"]) / step):int((xlim[1] - args["HardwareXStart"]) / step)]
     x = np.linspace(xlim[0], xlim[1], len(dataElem))
@@ -263,6 +271,13 @@ def RectWindow(dataElem, xlim, args):
     return dataElem, x, step
 
 def downSample(data, maxlength, x=None):
+    """
+    Downsampling.
+    :param data: array like
+    :param maxlength: maximum length of data array like structure
+    :param x: Same as data for two dimensional information
+    :return:
+    """
     data = data[0::int(len(data) / maxlength)]
     if x is not None:
         x = x[0::int(len(x) / maxlength)]
@@ -311,7 +326,10 @@ def measureFreq(path, xlim=None, freqLim = None):
             file.write("{}\n".format(f_max))
 
 def measureFreqAuto(path, xlim = None):
-    """Measures the dominant frequency in the data stored in path address and saves it to a .txt file. Only frequencies between 3MhZ and 5 MhZ are evaluated."""
+    """Measures the dominant frequency in the data stored in path address and saves it to a .txt file. Only frequencies between 3MhZ and 5 MhZ are evaluated.
+    :param path: path and subfolders are searched for measuerment data
+    :param xlim: (t_start, t_stop) Makes a rectangular window over given time period between t_start and t_stop
+    :return: .txt file containing the frequency of highest amplitude between 3 MHz and 5 MHz"""
     paths = findData(path)
     for path in paths:  #Removes the stored data in .txt files if they exist
         path = os.path.dirname(path)
@@ -343,6 +361,11 @@ def measureFreqAuto(path, xlim = None):
                             file.write("{} +- {}".format(mean, u))
 
 def calcUncerFromFile(path):
+    """
+    Calculates the uncertainty and mean value.
+    :param path: path to a .txt documents which contians the individual values
+    :return: touple with mean and uncertainty information
+    """
     with open(path, "r") as file:
         data = file.readlines()
     data_float = []
@@ -365,10 +388,17 @@ def calcUncerFromFile(path):
     return mean, sigma
 
 
-def FFT(data, step, Tmax=None):
-    if Tmax is None: Tmax = 1e-7  # 1/fs
-    if step < Tmax:
-        maxlength = int(step / Tmax * len(data))
+def FFT(data, step, Tmin=None):
+    """
+    Calculates a FFT. Capable of downsampling if step < Tmin .
+    :param data: amplitude data
+    :param step: time step
+    :param Tmin: Minimum time step used for down sampling
+    :return: touple containing magnitute and frequency information
+    """
+    if Tmin is None: Tmin = 1e-7  # 1/fs
+    if step < Tmin:
+        maxlength = int(step / Tmin * len(data))
         length = len(data)
         data = downSample(data=data, maxlength=maxlength)
         step = int(length / maxlength) * step
@@ -381,6 +411,12 @@ def FFT(data, step, Tmax=None):
     return mag, freq
 
 def binarySearch(data, key):
+    """
+    Classical binary search.
+    :param data: array like
+    :param key: search key
+    :return: index closest to key or key
+    """
     if len(data) == 1:
         return 0
     else:
@@ -394,7 +430,7 @@ def binarySearch(data, key):
 
 def measureAmp(path, Tmax = None, xlim = None):
     """Evaluates the amplitude of the measured data. Has a Threshold implemented, and only amplitudes over that threshold are detected.
-    Tmax : declares the maximum time between two samples. If this value is bigger than in the data, the data is downsampled."""
+    :param Tmax : declares the maximum time between two samples. If this value is bigger than in the data, the data is downsampled."""
     data, args = parseData(path)
 
     for i, y in enumerate(data):
@@ -432,6 +468,11 @@ def measureAmp(path, Tmax = None, xlim = None):
             file.write("{}\n".format(amplitude))
 
 def measureAmpAuto(path):
+    """
+    Measuers the amplitude of the measuerd data.
+    :param path: given path and subfolders are searched for measured data
+    :return: .txt file in same folder as measuerments containing the amplitude information and a mean and uncertainty value
+    """
     paths = findData(path)
     for path in paths:  # Removes the stored data in .txt files if they exist
         path = os.path.dirname(path)
@@ -460,6 +501,11 @@ def measureAmpAuto(path):
                             file.write("{} +- {}".format(mean, u))
 
 def readValuesFromTxtAuto(path):
+    """
+    Reads all information from .txt files which were stored by the measuerFreqAuto or measureAmpAuto functions.
+    :param path: given path and subfolders are searched for .txt files
+    :return: A tree like structure containing all information from .txt file in location from path or subfolders
+    """
     paths = findData(path=path, search_key=".txt")
     return_dict = {}
     for path in paths:
@@ -473,6 +519,12 @@ def readValuesFromTxtAuto(path):
     return return_dict
 
 def merge_dicts(dict1, dict2):
+    """
+    Merges two dicts
+    :param dict1:
+    :param dict2:
+    :return: The merged dictionary
+    """
     if isinstance(dict1, type({})) and isinstance(dict2,  type({})):
         for key1 in dict1.keys():
             if key1 in dict2.keys():
@@ -491,6 +543,11 @@ def merge_dicts(dict1, dict2):
 
 
 def readValuesFromTxt(path):
+    """
+    Reads data from .txt files which was evaluated by measureFreqAuto or measureAmpAuto functions.
+    :param path: Path of the .txt file"
+    :return: touple element containing the mean value and uncertainty value
+    """
     if os.path.exists(path):
         with open(path, "r") as file:
             data = file.readlines()
@@ -507,9 +564,94 @@ def readValuesFromTxt(path):
         raise AssertionError("The file described by the path does not exist.")
 
 def evaluate(path):
+    """Extracts frequency and amplitude information of measurement data and returns it in a tree like structure.
+    :param path = path to folder in which/ or in which subfolders, measuerments are stored"""
     measureFreqAuto(path=path)
     measureAmpAuto(path=path)
     return readValuesFromTxtAuto(path=path)
+
+def plotMeasurementsWithUncertainty(data, title=""):
+    """Reads information from the data and plots it. Plots are stored in "./plots" relative to the Plotter.py file.
+    :param data = Output of readValuesFromTxt(), Tree like structure containing the data
+    :return: plots in ./plots folder relative to Plotter.py"""
+    if isinstance(data, type({})):
+        flarmor = 4.3576
+        ampMust = []
+        teList = []
+        rf90durationList =[]
+        teFreqChannel1 = []
+        durFreqChannel1 = []
+        ampChannel1 = []
+        for key in data.keys():
+            if "mplitude" in key:
+                if "Amplitude" in key:
+                    amp = key.replace("Amplitude", "")
+                else:
+                    amp = key.replace("amplitude", "")
+                amp = float(amp.replace("mV", ""))
+                ampMust.append(amp)
+                tmp = data[key]["ampChannel1.txt"]
+                for i, t in enumerate(tmp):
+                    tmp[i] = t*1000
+                ampChannel1.append(tmp)
+            elif "te" in key:
+                te = key.replace("te", "")
+                teList.append(float(te.replace("ms", "")))
+                tmp = data[key]["freqChannel1.txt"]
+                for i, t in enumerate(tmp):
+                    if i == 0:
+                        tmp[i] = t*1e-3 - flarmor*1e3
+                    else:
+                        tmp[i] = t*1e-3
+                teFreqChannel1.append(tmp)
+            elif "rf90duration" in key:
+                rf90duration = key.replace("rf90duration", "")
+                rf90durationList.append(float(rf90duration.replace("us", "")))
+                tmp = data[key]["freqChannel1.txt"]
+                for i, t in enumerate(tmp):
+                    if i == 0:
+                        tmp[i] = t*1e-3 - flarmor*1e3
+                    else:
+                        tmp[i] = t*1e-3
+                durFreqChannel1.append(tmp)
+            else:
+                plotMeasurementsWithUncertainty(data=data[key], title=key)
+        plotWithUncertainties(ampMust, ampChannel1, title + "Amplitude")
+        plotWithUncertainties(teList, teFreqChannel1, title + "Te")
+        plotWithUncertainties(rf90durationList, durFreqChannel1, title + "Rf90Duration")
+    else:
+        pass
+
+
+
+
+def plotWithUncertainties(X, Y, title, save=True):
+    """Plots the data in X and Y with errorbars. Each value of Y has two entires. The fist is the measured value. The second the uncertainty.
+    X = data on x axis
+    Y = data on y axis with uncertainty
+    title = used for saving the figure
+    save = if True saves the figure, if False shows the figure"""
+    if X == [] or Y == []:
+        pass
+    else:
+        for x, y in zip(X, Y):
+            plt.errorbar(x, y[0], yerr=y[1], fmt=".k")
+        if "Amplitude" in title:
+            plt.xlabel("amplitude in mV")
+            plt.ylabel("output in mV")
+        elif "Te" in title:
+            plt.xlabel("Te in ms")
+            plt.ylabel("Delta f in kHz")
+        elif "Rf90Duration" in title:
+            plt.xlabel("rf90duration in us")
+            plt.ylabel("Delta f in kHz")
+        plt.grid()
+        if save == True:
+            savetitle = "./plots/" + title.replace(" ", "_") + ".pdf"
+            plt.savefig(savetitle)
+            plt.close("all")
+        else:
+            plt.show()
 
 
 
@@ -533,23 +675,15 @@ if __name__ == '__main__':
     #TODO titledict only works if titles are keys are unique for every path
     
     titledict = {}
-    titledict["GateAndRFPulseAmplified0212"] = "RF and gate pulse amplified"
-    titledict["GateAndRFPulseNotAmplified0212"] = "RF and gate pulse not amplified"
-    titledict["90und180degPulse50Ohm"] = "90 and 180 deg  RF pulse"
-    titledict["dummyCoilGateRinging"] = "50 Ohms Dummy Coil Ringing"
-    titledict["NoCoilNoTransSignalGateRinging"] = "Dummy Coil No Tx Signal Ringing"
-    titledict["RealCoilGateRinging"] = "Attached RF Coil Ringing"
-    titledict["TRSwitchJustGatePulse"] = "Gate Ringing with no TX Signal"
-    titledict["RFPulsePowerAmplifier90and180deg"] = "Output RF Amplifier"
-    titledict["90degPulse"] = "90 degree pulse"
 
     curr_path = os.path.dirname(__file__)   #returns the current path of the python skript
     curr_path = os.path.dirname(curr_path)  # ".."
-    curr_path = curr_path + "/07042021RFAmplifier"
+    #curr_path = curr_path + "/07042021RFAmplifier"
     Autoplot(curr_path, titledict = titledict)
     #measureFreqAuto(path=curr_path)
     #measureAmpAuto(path=curr_path)
     data = readValuesFromTxtAuto(path=curr_path)
+    plotMeasurementsWithUncertainty(data=data)
 
     save = False
 
